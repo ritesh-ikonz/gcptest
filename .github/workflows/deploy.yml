@@ -1,0 +1,148 @@
+name: Deploy to Google Cloud Run
+
+on:
+  push:
+    branches:
+      - dev
+      - stage
+      - main
+
+# Top-level permissions required for Workload Identity Federation
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  #---------------------------------------------------
+  # DEPLOY TO DEVELOPMENT
+  #---------------------------------------------------
+  deploy-dev:
+    if: github.ref_name == 'dev'
+    name: Deploy to Development
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and Push Docker Image
+        id: build-push
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          # This step only builds and pushes the image, does not deploy yet.
+          # We use the commit SHA for a unique, traceable image tag.
+          image: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/groq-chat-repo/${{ vars.CLOUD_RUN_SERVICE_NAME }}:${{ github.sha }}
+          # The 'no-deploy' flag ensures this step only handles the image build and push.
+          no_deploy: true 
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ vars.CLOUD_RUN_SERVICE_NAME }}
+          region: ${{ vars.GCP_REGION }}
+          # Deploy the specific image we just built and pushed
+          image: ${{ steps.build-push.outputs.image }}
+          env_vars: |
+            GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }}
+          # Mount the Groq API key from Secret Manager as an environment variable
+          secrets:
+            - name: GROQ_API_KEY
+              value: groq-api-key:latest
+
+  #---------------------------------------------------
+  # DEPLOY TO STAGING
+  #---------------------------------------------------
+  deploy-stage:
+    if: github.ref_name == 'stage'
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    environment: stage
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and Push Docker Image
+        id: build-push
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          image: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/groq-chat-repo/${{ vars.CLOUD_RUN_SERVICE_NAME }}:${{ github.sha }}
+          no_deploy: true 
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ vars.CLOUD_RUN_SERVICE_NAME }}
+          region: ${{ vars.GCP_REGION }}
+          image: ${{ steps.build-push.outputs.image }}
+          env_vars: |
+            GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }}
+          secrets:
+            - name: GROQ_API_KEY
+              value: groq-api-key:latest
+
+  #---------------------------------------------------
+  # DEPLOY TO PRODUCTION
+  #---------------------------------------------------
+  deploy-prod:
+    if: github.ref_name == 'main'
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    environment: prod
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and Push Docker Image
+        id: build-push
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          image: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/groq-chat-repo/${{ vars.CLOUD_RUN_SERVICE_NAME }}:${{ github.sha }}
+          no_deploy: true 
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ vars.CLOUD_RUN_SERVICE_NAME }}
+          region: ${{ vars.GCP_REGION }}
+          image: ${{ steps.build-push.outputs.image }}
+          env_vars: |
+            GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }}
+          secrets:
+            - name: GROQ_API_KEY
+              value: groq-api-key:latest
