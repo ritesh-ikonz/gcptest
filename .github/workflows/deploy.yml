@@ -32,9 +32,15 @@ jobs:
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
 
-      # 4️⃣ Configure Docker for Artifact Registry
-      - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker --quiet
+      # 4️⃣ Ensure Artifact Registry repository exists (first-time deploys)
+      - name: Create Artifact Registry repo if missing
+        run: |
+          gcloud artifacts repositories describe groq-chat-repo \
+            --location=${{ vars.GCP_REGION }} || \
+          gcloud artifacts repositories create groq-chat-repo \
+            --repository-format=docker \
+            --location=${{ vars.GCP_REGION }} \
+            --description="Docker repo for Groq Chat"
 
       # 5️⃣ Set Environment Variables Based on Branch
       - name: Set Environment Variables
@@ -53,18 +59,14 @@ jobs:
             exit 1
           fi
 
-      # 6️⃣ Build Docker image locally (no Cloud Build)
-      - name: Build Docker image
+      # 6️⃣ Build & Push using Cloud Build
+      - name: Build & Push Docker image via Cloud Build
         run: |
           IMAGE_URI=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/groq-chat-repo/${CLOUD_RUN_SERVICE_NAME}:${GITHUB_SHA}
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
-          docker build -t $IMAGE_URI .
+          gcloud builds submit --tag $IMAGE_URI --project=${{ vars.GCP_PROJECT_ID }}
 
-      # 7️⃣ Push Docker image to Artifact Registry
-      - name: Push Docker image
-        run: docker push $IMAGE_URI
-
-      # 8️⃣ Deploy to Cloud Run
+      # 7️⃣ Deploy to Cloud Run
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy $CLOUD_RUN_SERVICE_NAME \
