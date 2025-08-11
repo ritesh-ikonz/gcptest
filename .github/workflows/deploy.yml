@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout Code
+      # 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -26,17 +26,17 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
-      # 3️⃣ Set up gcloud CLI
+      # 3️⃣ Set up Cloud SDK
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
 
-      # 4️⃣ Configure Docker for all registries (avoids region mistakes)
+      # 4️⃣ Configure Docker for Artifact Registry
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker --quiet
 
-      # 5️⃣ Determine Service Name & Environment
+      # 5️⃣ Set Environment Variables Based on Branch
       - name: Set Environment Variables
         run: |
           if [[ "${GITHUB_REF_NAME}" == "dev" ]]; then
@@ -49,18 +49,22 @@ jobs:
             echo "CLOUD_RUN_SERVICE_NAME=${{ vars.CLOUD_RUN_SERVICE_NAME_PROD }}" >> $GITHUB_ENV
             echo "DEPLOY_ENV=production" >> $GITHUB_ENV
           else
-            echo "Unknown branch ${GITHUB_REF_NAME}, skipping."
+            echo "Unknown branch ${GITHUB_REF_NAME}"
             exit 1
           fi
 
-      # 6️⃣ Build & Push Image
-      - name: Build and Push Docker Image
+      # 6️⃣ Build Docker image locally (no Cloud Build)
+      - name: Build Docker image
         run: |
           IMAGE_URI=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/groq-chat-repo/${CLOUD_RUN_SERVICE_NAME}:${GITHUB_SHA}
-          gcloud builds submit --tag $IMAGE_URI
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+          docker build -t $IMAGE_URI .
 
-      # 7️⃣ Deploy to Cloud Run
+      # 7️⃣ Push Docker image to Artifact Registry
+      - name: Push Docker image
+        run: docker push $IMAGE_URI
+
+      # 8️⃣ Deploy to Cloud Run
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy $CLOUD_RUN_SERVICE_NAME \
