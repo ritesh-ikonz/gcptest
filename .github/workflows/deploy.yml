@@ -14,42 +14,59 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name }}
 
     steps:
+      # 1️⃣ Checkout Code
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Authenticate to Google Cloud using Service Account JSON secret
+      # 2️⃣ Authenticate to Google Cloud
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
-      # Set up the Google Cloud SDK
+      # 3️⃣ Set up gcloud CLI
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ vars.GCP_PROJECT_ID }}
 
-      # Configure Docker to authenticate with Google Artifact Registry
+      # 4️⃣ Configure Docker for all registries (avoids region mistakes)
       - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+        run: gcloud auth configure-docker --quiet
 
-      # Build and push Docker image to Artifact Registry
+      # 5️⃣ Determine Service Name & Environment
+      - name: Set Environment Variables
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == "dev" ]]; then
+            echo "CLOUD_RUN_SERVICE_NAME=${{ vars.CLOUD_RUN_SERVICE_NAME_DEV }}" >> $GITHUB_ENV
+            echo "DEPLOY_ENV=development" >> $GITHUB_ENV
+          elif [[ "${GITHUB_REF_NAME}" == "stage" ]]; then
+            echo "CLOUD_RUN_SERVICE_NAME=${{ vars.CLOUD_RUN_SERVICE_NAME_STAGE }}" >> $GITHUB_ENV
+            echo "DEPLOY_ENV=staging" >> $GITHUB_ENV
+          elif [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            echo "CLOUD_RUN_SERVICE_NAME=${{ vars.CLOUD_RUN_SERVICE_NAME_PROD }}" >> $GITHUB_ENV
+            echo "DEPLOY_ENV=production" >> $GITHUB_ENV
+          else
+            echo "Unknown branch ${GITHUB_REF_NAME}, skipping."
+            exit 1
+          fi
+
+      # 6️⃣ Build & Push Image
       - name: Build and Push Docker Image
         run: |
-          IMAGE_URI=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/groq-chat-repo/${{ vars.CLOUD_RUN_SERVICE_NAME }}:${{ github.sha }}
+          IMAGE_URI=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/groq-chat-repo/${CLOUD_RUN_SERVICE_NAME}:${GITHUB_SHA}
           gcloud builds submit --tag $IMAGE_URI
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
-      # Deploy to Google Cloud Run
+      # 7️⃣ Deploy to Cloud Run
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy ${{ vars.CLOUD_RUN_SERVICE_NAME }} \
+          gcloud run deploy $CLOUD_RUN_SERVICE_NAME \
             --image $IMAGE_URI \
             --region ${{ vars.GCP_REGION }} \
             --platform managed \
             --allow-unauthenticated \
-            --set-env-vars GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
+            --set-env-vars DEPLOY_ENV=$DEPLOY_ENV,GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
             --set-secrets GROQ_API_KEY=groq-api-key:latest
