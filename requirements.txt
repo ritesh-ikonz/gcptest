@@ -4,3 +4,5 @@ langchain
 langchain-groq
 pydantic-settings
 google-cloud-secret-manager
+python-multipart
+aiofiles
