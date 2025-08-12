@@ -1,0 +1,78 @@
+name: Deploy to Google Cloud Run
+
+on:
+  push:
+    branches:
+      - dev
+      - stage
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1️⃣ Checkout repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2️⃣ Authenticate to Google Cloud
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      # 3️⃣ Set up Cloud SDK
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      # 4️⃣ Ensure Artifact Registry repository exists (first-time deploys)
+      - name: Create Artifact Registry repo if missing
+        run: |
+          gcloud artifacts repositories describe groq-chat-repo \
+            --location=${{ vars.GCP_REGION }} || \
+          gcloud artifacts repositories create groq-chat-repo \
+            --repository-format=docker \
+            --location=${{ vars.GCP_REGION }} \
+            --description="Docker repo for Groq Chat"
+
+      # 5️⃣ Set Environment Variables Based on Branch
+      - name: Set Environment Variables
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == "dev" ]]; then
+            echo "CLOUD_RUN_SERVICE_NAME=${{ vars.CLOUD_RUN_SERVICE_NAME_DEV }}" >> $GITHUB_ENV
+            echo "DEPLOY_ENV=development" >> $GITHUB_ENV
+          elif [[ "${GITHUB_REF_NAME}" == "stage" ]]; then
+            echo "CLOUD_RUN_SERVICE_NAME=${{ vars.CLOUD_RUN_SERVICE_NAME_STAGE }}" >> $GITHUB_ENV
+            echo "DEPLOY_ENV=staging" >> $GITHUB_ENV
+          elif [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            echo "CLOUD_RUN_SERVICE_NAME=${{ vars.CLOUD_RUN_SERVICE_NAME_PROD }}" >> $GITHUB_ENV
+            echo "DEPLOY_ENV=production" >> $GITHUB_ENV
+          else
+            echo "Unknown branch ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
+      # 6️⃣ Build & Push using Cloud Build
+      - name: Build & Push Docker image via Cloud Build
+        run: |
+          IMAGE_URI=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/groq-chat-repo/${CLOUD_RUN_SERVICE_NAME}:${GITHUB_SHA}
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+          gcloud builds submit --tag $IMAGE_URI --project=${{ vars.GCP_PROJECT_ID }}
+
+      # 7️⃣ Deploy to Cloud Run
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy $CLOUD_RUN_SERVICE_NAME \
+            --image $IMAGE_URI \
+            --region ${{ vars.GCP_REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --set-env-vars DEPLOY_ENV=$DEPLOY_ENV,GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} \
+            --set-secrets GROQ_API_KEY=groq-api-key:latest
